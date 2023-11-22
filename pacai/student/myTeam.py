@@ -1,4 +1,4 @@
-from pacai.util import reflection
+from pacai.agents.capture.dummy import DummyAgent
 
 def createTeam(firstIndex, secondIndex, isRed,
         first = 'pacai.agents.capture.dummy.DummyAgent',
@@ -10,10 +10,7 @@ def createTeam(firstIndex, secondIndex, isRed,
     and will be False if the blue team is being created.
     """
 
-    firstAgent = reflection.qualifiedImport(first)
-    secondAgent = reflection.qualifiedImport(second)
-
     return [
-        firstAgent(firstIndex),
-        secondAgent(secondIndex),
+        DummyAgent(firstIndex),
+        DummyAgent(secondIndex),
     ]
