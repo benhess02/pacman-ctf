@@ -1,5 +1,5 @@
 from pacai.agents.capture.reflex import ReflexCaptureAgent
-from pacai.core import Directions
+from pacai.core.directions import Directions
 import random
 
 class OffensiveReflexAgent(ReflexCaptureAgent):
@@ -9,45 +9,71 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
     but it is by no means the best or only way to build an offensive agent.
     """
 
-    def __init__(self, index, **kwargs):
-        super().__init__(index)
+    def __init__(self, index, gridWidth=None, gridHeight=None, **kwargs):
+        super().__init__(index, **kwargs)
+        self.gridWidth = gridWidth if gridWidth is not None else defaultGridWidth
+        self.gridHeight = gridHeight if gridHeight is not None else defaultGridHeight
+
+    def getOpponents(self, gameState):
+        """
+        Returns the indices of the opposing team's agents.
+        Assumes even indices are on one team and odd indices are on the other.
+        """
+        if hasattr(gameState, 'getNumAgents'):
+            numAgents = gameState.getNumAgents()
+            if self.index % 2 == 0:
+                # If this agent's index is even, opponents are odd-indexed agents
+                return [i for i in range(numAgents) if i % 2 != 0]
+            else:
+                # If this agent's index is odd, opponents are even-indexed agents
+                return [i for i in range(numAgents) if i % 2 == 0]
+        else:
+            # Handle the case where gameState does not have getNumAgents
+            # You might need to implement a different logic based on your game's specifics
+            # For example, return a default list of opponent indices
+            return [1 - self.index]  # This is a simple example for a two-agent game
 
     def getFeatures(self, gameState, action):
         features = super().getFeatures(gameState, action)
         successor = self.getSuccessor(gameState, action)
         features['successorScore'] = self.getScore(successor)
 
-        # Get positions and other relevant state info
-        myState = successor.getAgentState(self.index)
-        myPos = myState.getPosition()
+        # Check if successor has getAgentState method
+        if hasattr(successor, 'getAgentState'):
+            myState = successor.getAgentState(self.index)
+            myPos = myState.getPosition()
 
-        # Compute distance to the nearest food
-        foodList = self.getFood(successor).asList()
-        if foodList:  # This should always be True, but better safe than sorry
-            # Strategic Food Targeting
-            # Weigh food based on distance and safety
-            foodScores = self.calculateFoodScores(foodList, myPos, features)
-            bestFood = min(foodScores)[1]
-            features['distanceToFood'] = self.getMazeDistance(myPos, bestFood)
+            # Compute distance to the nearest food
+            foodList = self.getFood(successor).asList()
+            if foodList:  # This should always be True, but better safe than sorry
+                # Strategic Food Targeting
+                # Weigh food based on distance and safety
+                foodScores = self.calculateFoodScores(foodList, myPos, successor)
+                if foodScores:  # Check if foodScores is not empty
+                    bestFood = min(foodScores, key=lambda x: x[0])[1]
+                    features['distanceToFood'] = self.getMazeDistance(myPos, bestFood)
+                else:
+                    features['distanceToFood'] = float('inf')  # Or some large value
+            else:
+                features['distanceToFood'] = float('inf')  # Or some large value
+
+            # Risk Assessment from Ghosts
+            ghostStates = [successor.getAgentState(i) for i in self.getOpponents(successor)]
+            ghosts = [ghost for ghost in ghostStates if not ghost.isPacman() and ghost.getPosition() is not None]
+            features['ghostRisk'] = self.calculateGhostRisk(ghosts, successor)  # Pass successor as gameState
+
+            # Power Capsule Strategy
+            capsules = self.getCapsules(successor)
+            if capsules:
+                features['distanceToCapsule'] = min([self.getMazeDistance(myPos, capsule) for capsule in capsules])
+                features['capsuleValue'] = 1 / (1 + min([self.getMazeDistance(myPos, ghost.getPosition()) for ghost in ghosts])) if ghosts else 0
+            else:
+                features['distanceToCapsule'] = 0
+                features['capsuleValue'] = 0
         else:
+            # Default values if successor does not have getAgentState
             features['distanceToFood'] = 0
-
-        # Risk Assessment from Ghosts
-        ghostStates = [successor.getAgentState(i) for i in self.getOpponents(successor)]
-        ghosts = [ghost for ghost in ghostStates if not ghost.isPacman() and ghost.getPosition() is not None]
-        features['ghostRisk'] = self.calculateGhostRisk(ghosts, myPos)
-        if ghosts:
-            distancesToGhosts = [self.getMazeDistance(myPos, ghost.getPosition()) for ghost in ghosts]
-            # Risk increases as pacman gets closer to ghost
-            features['ghostRisk'] = sum([1 / (d + 1) for d in distancesToGhosts])
-
-        # Power Capsule Strategy
-        capsules = self.getCapsules(successor)
-        if capsules:
-            features['distanceToCapsule'] = min([self.getMazeDistance(myPos, capsule) for capsule in capsules])
-            # Higher value when ghosts are close
-            features['capsuleValue'] = 1 / (1 + min(distancesToGhosts)) if ghosts else 0
-        else:
+            features['ghostRisk'] = 0
             features['distanceToCapsule'] = 0
             features['capsuleValue'] = 0
 
@@ -73,30 +99,81 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
 
         return foodScores
     
-    def calculateGhostRisk(self, ghosts, myPos, gameState):
+    def calculateFoodScores(self, foodList, myPos, gameState):
+        foodScores = []
+        opponentIndices = self.getOpponents(gameState)
+
+        # Check if gameState has getAgentState method
+        if hasattr(gameState, 'getAgentState'):
+            ghostPositions = [gameState.getAgentState(i).getPosition() for i in opponentIndices
+                            if not gameState.getAgentState(i).isPacman() and gameState.getAgentState(i).getPosition() is not None]
+            for food in foodList:
+                distanceToFood = self.getMazeDistance(myPos, food)
+                safetyScore = sum([1 / (self.getMazeDistance(food, ghostPos) + 1) for ghostPos in ghostPositions if ghostPos is not None])
+
+                # Calculate food density around this food item
+                neighbors = [f for f in foodList if self.getMazeDistance(food, f) < 5]
+                foodDensity = len(neighbors)
+
+                # Score based on distance, safety, and density
+                score = (1 / (distanceToFood + 1)) * (1 - safetyScore) * foodDensity
+                foodScores.append((score, food))
+        else:
+            # Handle the case where gameState does not have getAgentState
+            ghostPositions = []
+
+        return foodScores
+    
+    def calculateGhostRisk(self, ghosts, gameState):
         ghostRisk = 0
-        for ghost in ghosts:
-            distance = self.getMazeDistance(myPos, ghost.getPosition())
-            scared = gameState.getAgentState(ghost.index).scaredTimer > 0
+        for ghostIndex in self.getOpponents(gameState):  # Use the indices of the ghosts
+            ghost = gameState.getAgentState(ghostIndex)
+            if ghost and not ghost.isPacman() and ghost.getPosition() is not None:
+                distance = self.getMazeDistance(gameState.getAgentState(self.index).getPosition(), ghost.getPosition())
+                scared = ghost._scaredTimer > 0
 
-            # Increase risk based on proximity and decrease if the ghost is scared
-            riskFactor = (1 / (distance + 1)) * (0.5 if scared else 1)
+                # Increase risk based on proximity and decrease if the ghost is scared
+                riskFactor = (1 / (distance + 1)) * (0.5 if scared else 1)
 
-            # Consider the direction of the ghost
-            if self.isGhostApproaching(myPos, ghost, gameState):
-                riskFactor *= 1.5  # Increase risk if the ghost is approaching
+                # Consider the direction of the ghost
+                if self.isGhostApproaching(gameState.getAgentState(self.index).getPosition(), ghostIndex, gameState):
+                    riskFactor *= 1.5  # Increase risk if the ghost is approaching
 
-            ghostRisk += riskFactor
+                ghostRisk += riskFactor
 
         return ghostRisk
 
-    def isGhostApproaching(self, myPos, ghost, gameState):
-        ghostPos = ghost.getPosition()
-        ghostDirection = gameState.getAgentState(ghost.index).getDirection()
-        nextGhostPos = self.getNextPosition(ghostPos, ghostDirection)
+    def isGhostApproaching(self, myPos, ghostIndex, gameState):
+        if hasattr(gameState, 'getAgentState'):
+            ghostState = gameState.getAgentState(ghostIndex)
+            if ghostState and ghostState.getPosition() is not None and ghostState.getDirection() is not None:
+                ghostPos = ghostState.getPosition()
+                ghostDirection = ghostState.getDirection()
+                nextGhostPos = self.getNextPosition(ghostPos, ghostDirection)
+                return self.getMazeDistance(myPos, nextGhostPos) < self.getMazeDistance(myPos, ghostPos)
+        else:
+            # Handle the case where gameState does not have getAgentState or ghost does not have getPosition/getDirection
+            return False
+        
+    def getNextPosition(self, position, direction):
+        x, y = position
+        next_x, next_y = x, y
 
-        return self.getMazeDistance(myPos, nextGhostPos) < self.getMazeDistance(myPos, ghostPos)
-    
+        if direction == Directions.NORTH:
+            next_y += 1
+        elif direction == Directions.SOUTH:
+            next_y -= 1
+        elif direction == Directions.EAST:
+            next_x += 1
+        elif direction == Directions.WEST:
+            next_x -= 1
+
+        # Ensure the new position is within the grid bounds
+        next_x = max(0, min(next_x, self.gridWidth - 1))
+        next_y = max(0, min(next_y, self.gridHeight - 1))
+
+        return (next_x, next_y)
+
     def getWeights(self, gameState, action):
         return {
             'successorScore': 100,
@@ -112,8 +189,23 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
  
 class DefensiveAgent(ReflexCaptureAgent):
 
-    def __init__(self, index, **kwargs):
+    def __init__(self, index, gridWidth, gridHeight, **kwargs):
         super().__init__(index, **kwargs)
+        self.gridWidth = gridWidth
+        self.gridHeight = gridHeight
+
+    def getOpponents(self, gameState):
+        """
+        Returns the indices of the opposing team's agents.
+        Assumes even indices are on one team and odd indices are on the other.
+        """
+        numAgents = gameState.getNumAgents()
+        if self.index % 2 == 0:
+            # If this agent's index is even, opponents are odd-indexed agents
+            return [i for i in range(numAgents) if i % 2 != 0]
+        else:
+            # If this agent's index is odd, opponents are even-indexed agents
+            return [i for i in range(numAgents) if i % 2 == 0]
 
     def chooseAction(self, gameState):
         action = self.chooseDefensiveAction(gameState)
@@ -257,7 +349,8 @@ class DefensiveAgent(ReflexCaptureAgent):
         # Calculate scores for each ambush point
         ambushScores = {}
         for point in ambushPoints:
-            score = self.calculateAmbushPointScore(point, gameState)
+            # Pass gameState as an argument to calculateAmbushPointScore
+            score = self.calculateAmbushPointScore(point, self.getOpponents(gameState), gameState)
             distanceScore = -self.getMazeDistance(myPos, point)
             ambushScores[point] = score + distanceScore
 
@@ -363,8 +456,8 @@ class DefensiveAgent(ReflexCaptureAgent):
     def getChokePoints(self, gameState):
         chokePoints = []
         walls = gameState.getWalls()
-        for x in range(walls.width):
-            for y in range(walls.height):
+        for x in range(walls._width):
+            for y in range(walls._height):
                 if not walls[x][y]:
                     # A choke point is identified by having multiple adjacent walls
                     adjacentWalls = sum([walls[x + dx][y + dy] for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]])
@@ -528,9 +621,11 @@ class DefensiveAgent(ReflexCaptureAgent):
 
         return False
 
-def createTeam(firstIndex, secondIndex, isRed,
+def createTeam(firstIndex, secondIndex, gameLayout,
         first = 'pacai.agents.capture.dummy.DummyAgent',
         second = 'pacai.agents.capture.dummy.DummyAgent'):
+    gridWidth = gameLayout.width
+    gridHeight = gameLayout.height
     """
     This function should return a list of two agents that will form the capture team,
     initialized using firstIndex and secondIndex as their agent indexed.
@@ -539,6 +634,6 @@ def createTeam(firstIndex, secondIndex, isRed,
     """
 
     return [
-        OffensiveReflexAgent(firstIndex),
-        DefensiveAgent(secondIndex),
+        OffensiveReflexAgent(firstIndex, gridWidth, gridHeight),
+        DefensiveAgent(secondIndex, gridWidth, gridHeight),
     ]
