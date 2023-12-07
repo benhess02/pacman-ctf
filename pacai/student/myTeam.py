@@ -53,6 +53,49 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
 
         return features
     
+    def calculateFoodScores(self, foodList, myPos, gameState):
+        foodScores = []
+        ghostPositions = [gameState.getAgentState(i).getPosition() for i in self.getOpponents(gameState) 
+                        if not gameState.getAgentState(i).isPacman() and gameState.getAgentState(i).getPosition() is not None]
+
+        for food in foodList:
+            distanceToFood = self.getMazeDistance(myPos, food)
+            safetyScore = sum([1 / (self.getMazeDistance(food, ghostPos) + 1) for ghostPos in ghostPositions if ghostPos is not None])
+
+            # Calculate food density around this food item
+            neighbors = [f for f in foodList if self.getMazeDistance(food, f) < 5]
+            foodDensity = len(neighbors)
+
+            # Score based on distance, safety, and density
+            score = (1 / (distanceToFood + 1)) * (1 - safetyScore) * foodDensity
+            foodScores.append((score, food))
+
+        return foodScores
+    
+    def calculateGhostRisk(self, ghosts, myPos, gameState):
+        ghostRisk = 0
+        for ghost in ghosts:
+            distance = self.getMazeDistance(myPos, ghost.getPosition())
+            scared = gameState.getAgentState(ghost.index).scaredTimer > 0
+
+            # Increase risk based on proximity and decrease if the ghost is scared
+            riskFactor = (1 / (distance + 1)) * (0.5 if scared else 1)
+
+            # Consider the direction of the ghost
+            if self.isGhostApproaching(myPos, ghost, gameState):
+                riskFactor *= 1.5  # Increase risk if the ghost is approaching
+
+            ghostRisk += riskFactor
+
+        return ghostRisk
+
+    def isGhostApproaching(self, myPos, ghost, gameState):
+        ghostPos = ghost.getPosition()
+        ghostDirection = gameState.getAgentState(ghost.index).getDirection()
+        nextGhostPos = self.getNextPosition(ghostPos, ghostDirection)
+
+        return self.getMazeDistance(myPos, nextGhostPos) < self.getMazeDistance(myPos, ghostPos)
+    
     def getWeights(self, gameState, action):
         return {
             'successorScore': 100,
