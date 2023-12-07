@@ -1,5 +1,5 @@
 from pacai.agents.capture.reflex import ReflexCaptureAgent
-from pacai.util import Directions
+from pacai.core import Directions
 import random
 
 class OffensiveReflexAgent(ReflexCaptureAgent):
@@ -55,7 +55,8 @@ class OffensiveReflexAgent(ReflexCaptureAgent):
     
     def calculateFoodScores(self, foodList, myPos, gameState):
         foodScores = []
-        ghostPositions = [gameState.getAgentState(i).getPosition() for i in self.getOpponents(gameState) 
+        opponentIndices = self.getOpponents(gameState)
+        ghostPositions = [gameState.getAgentState(i).getPosition() for i in opponentIndices
                         if not gameState.getAgentState(i).isPacman() and gameState.getAgentState(i).getPosition() is not None]
 
         for food in foodList:
